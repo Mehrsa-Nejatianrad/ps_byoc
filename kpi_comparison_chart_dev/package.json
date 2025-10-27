@@ -1,0 +1,24 @@
+{
+    "name": "kpi-chart",
+    "private": true,
+    "version": "0.0.0",
+    "type": "module",
+    "scripts": {
+      "dev": "vite",
+      "build": "vite build",
+      "preview": "vite preview"
+    },
+    "devDependencies": {
+      "@types/lodash": "^4.17.15",
+      "vite": "^6.2.0"
+    },
+    "dependencies": {
+      "@thoughtspot/ts-chart-sdk": "^0.0.2-alpha.16",
+      "highcharts": "^11.4.3",
+      "highcharts-custom-events": "^3.0.10",
+      "lodash": "^4.17.21",
+      "numeral": "^2.0.6",
+      "vercel": "^25.2.0"
+    }
+  }
+  

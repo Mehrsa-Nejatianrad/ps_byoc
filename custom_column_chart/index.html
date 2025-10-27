@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TS Custom Chart</title>
+    <script src="https://code.highcharts.com/highcharts.js"></script>
+    <script src="https://code.highcharts.com/modules/treemap.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/numeral.js/2.0.6/numeral.min.js"></script>
+    <script src="https://blacklabel.github.io/custom_events/customEvents.js"></script>
+
+    <!-- Link to external stylesheet -->
+    <link rel="stylesheet" href="style.css">
+
+</head>
+<body>
+    <div style="width: 99vw; height: 95vh; position: relative">
+        <!-- ✅ Button container for measure selection -->
+        <div id="buttonContainer"></div>
+
+        <!-- ✅ Chart container (ensures flexibility in styling) -->
+        <div id="chartContainer">
+            <div id="chart"></div>
+        </div>
+    </div>
+    
+    <script type="module" src="custom_column_chart.ts"></script>
+</body>
+</html>

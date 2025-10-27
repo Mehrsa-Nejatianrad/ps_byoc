@@ -1,0 +1,9 @@
+{
+  "headers": [{
+    "source": "/(.*)",
+    "headers": [{
+      "key": "Content-security-policy",
+      "value": "default-src 'self'; frame-ancestors *; form-action 'self'"
+    }]
+  }]
+}

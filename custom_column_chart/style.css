@@ -1,0 +1,55 @@
+/* General button styling */
+.measure-button {
+    background-color: #E5E7EB !important; /* Light grey */
+    color: #000 !important; /* Black text */
+    border: none;
+    padding: 10px 20px;
+    margin: 5px;
+    cursor: pointer;
+    border-radius: 20px; /* Oval shape */
+    font-weight: bold;
+    font-size: 14px;
+    transition: all 0.3s ease-in-out;
+    outline: none;
+    text-align: center;
+}
+
+/* Hover effect */
+.measure-button:hover {
+    background-color: #D1D5DB !important; /* Slightly darker grey */
+}
+
+/* ✅ Active/selected button styling */
+.measure-button.active-measure {
+    background-color: #60646cd8 !important; /* Dark grey */
+    color: #ffffffef !important; /* White text */
+    border: none;
+    box-shadow: 0px 2px 5px rgba(0, 0, 0, 0.2); /* Subtle shadow for better UI */
+}
+
+/* Ensures buttons do not inherit default styles */
+button {
+    all: unset;
+}
+
+/* Ensures correct layout */
+#buttonContainer {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+
+/* Ensures the chart container has correct dimensions */
+#chartContainer {
+    width: 100%;
+    height: 90vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+#chart {
+    width: 100%;
+    height: 100%;
+}

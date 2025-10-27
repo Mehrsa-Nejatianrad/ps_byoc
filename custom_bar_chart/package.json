@@ -1,0 +1,23 @@
+{
+    "name": "custom-bar-chart",
+    "version": "1.0.0",
+    "description": "",
+    "main": "dist/index.html",
+    "scripts": {
+        "dev": "vite",
+        "build": "tsc && vite build",
+        "preview": "vite preview"
+    },
+    "author": "Nihal Ahmed",
+    "license": "ISC",
+    "devDependencies": {
+        "vite": "^4.3.5"
+    },
+    "dependencies": {
+        "@thoughtspot/ts-chart-sdk": "0.0.2-alpha.20",
+        "highcharts": "^11.4.8",
+        "highcharts-custom-events": "^3.0.10",
+        "lodash": "^4.17.21",
+        "numeral": "^2.0.6"
+    }
+}

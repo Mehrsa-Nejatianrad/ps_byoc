@@ -1,0 +1,149 @@
+body {
+  display: flex;
+  align-items: flex-start; /* Align items to the top */
+  justify-content: flex-start; /* Align items to the left */
+  height: 100vh;
+  margin: 0;
+  background-color: #FFFFFF; /* Set the background color to white */
+  font-family: Optimo-Plain, "Helvetica Neue", Helvetica, Arial, sans-serif; /* Set the font to Helvetica */
+}
+
+/* ✅ KPI Card Styling */
+.kpi-card {
+  width: auto;
+  height: auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  align-items: flex-start;
+  background-color: #FFFFFF;
+}
+
+/* ✅ KPI Value */
+.kpi-value {
+  font-size: clamp(32px, 3vw, 40px);
+  font-weight: 550;
+  color: #1c2330;
+  margin-bottom: 20px;
+  line-height: 47px;
+}
+
+/* ✅ KPI Comparison */
+.kpi-comparison {
+  font-size: clamp(14px, 3vw, 16px);
+  color: #777e8b;
+  width: 100%;
+  font-family: Optimo-Plain, "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+
+/* ✅ KPI Measure */
+.kpi-measure {
+  margin-bottom: 5px;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+/* ✅ KPI Change */
+.kpi-change {
+  font-weight: bold;
+  margin-right: 15px;
+}
+
+/* ✅ KPI Value and Label */
+.kpi-value-and-label {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+/* ✅ Positive Change Styling */
+.kpi-positive {
+  color: green;
+  padding-right: 7px;
+}
+
+/* ✅ Negative Change Styling */
+.kpi-negative {
+  color: red;
+  padding-right: 7px;
+}
+
+/* ✅ Arrow Styling */
+.arrow {
+  font-weight: 200;
+}
+
+/* ✅ Comparison KPI Absolute Value */
+.comparisonKPIAbsoluteValue {
+  font-weight: bold;
+  padding-right: 3px;
+  color: #000000;
+}
+
+/* ✅ PDF Export Optimization */
+@media print and (max-width: 400px) {
+  body {
+    display: inline-block;
+    width: 100%;
+    height: auto;
+    margin: 0;
+    padding: 0;
+    background-color: #FFFFFF !important; /* Ensure white background for printing */
+  }
+
+  .kpi-card {
+    width: 100%;
+    height: auto;
+    padding: 0;
+    margin: 0;
+  }
+
+  .kpi-value {
+    font-size: 22px !important;
+    font-weight: 600 !important;
+    margin-bottom: 8px !important;
+    line-height: normal;
+  }
+
+  .kpi-comparison {
+    font-size: 10px !important;
+    line-height: normal;
+  }
+
+  .kpi-measure {
+    font-size: 10px !important;
+    width: 100%;
+    margin-bottom: 0px !important;
+  }
+
+  .kpi-change {
+    font-size: 10px !important;
+    margin-right: 0px !important;
+  }
+
+  .kpi-value-and-label {
+    display: inline;
+    flex-direction: row;
+    align-items: baseline;
+    width: 100%;
+  }
+
+  .kpi-positive {
+    color: green !important;
+  }
+
+  .kpi-negative {
+    color: red !important;
+  }
+
+  .arrow {
+    font-size: 10px !important;
+  }
+
+  .comparisonKPIAbsoluteValue {
+    font-size: 10px !important;
+    padding-right: 0px !important;
+  }
+
+}
