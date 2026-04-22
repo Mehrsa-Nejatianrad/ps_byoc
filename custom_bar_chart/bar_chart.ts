@@ -51,11 +51,16 @@ function formatNumber(value: number, format: string): string {
 }
 
 const seriesColorMap: Record<string, string> = {};
+const BYNDER_COLORS = [
+    '#126DFE', '#0E6765', '#B080EF', '#FCD640',
+    '#051E46', '#031025', '#CDCCFF', '#ECF3FF'
+];
+let colorIndex = 0;
+
 function generateRandomColor(): string {
-    const r = Math.floor(Math.random() * 256);
-    const g = Math.floor(Math.random() * 256);
-    const b = Math.floor(Math.random() * 256);
-    return `rgba(${r}, ${g}, ${b}, 0.5)`;
+    const color = BYNDER_COLORS[colorIndex % BYNDER_COLORS.length];
+    colorIndex++;
+    return color;
 }
 function getBackgroundColorForSeries(seriesName: string): string {
     if (seriesColorMap[seriesName]) {
