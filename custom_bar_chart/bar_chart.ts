@@ -9,446 +9,285 @@ import {
     Query,
     ChartColumn,
     AxisMenuActions,
-    ColumnProp,
 } from '@thoughtspot/ts-chart-sdk';
-import Highcharts, { color, Tooltip } from 'highcharts';
+import Highcharts from 'highcharts';
+import HighchartsMore from 'highcharts/highcharts-more';
+import WaterfallModule from 'highcharts/modules/waterfall';
 import numeral from 'numeral';
 import _ from 'lodash';
-import HighchartsCustomEvents from 'highcharts-custom-events';
 
-HighchartsCustomEvents(Highcharts);
-
-declare module 'highcharts' {
-    interface PointOptionsObject {
-        tooltipdata?: Array<{ columnName: string, value: number }>;
-    }
-}
-
-declare module 'highcharts' {
-    interface Point {
-        tooltipData?: Array<{ columnName: string; value: any }>;
-    }
-}
+// Initialize Highcharts modules
+HighchartsMore(Highcharts);
+WaterfallModule(Highcharts);
 
 interface VisualProps {
     numberFormat?: string;
-    stackColors?: Record<string, string>; // Stack colors
-    showTotalStackLabels?: boolean;
-    colorMapping?: Record<string, string>; // Map stack values to colors
+    colorPositive?: string;
+    colorNegative?: string;
+    colorTotal?: string;
+    colorCumulative?: string;
+    showDataLabels?: boolean;
 }
 
-let globalChartReference: Highcharts.Chart;
+let globalChartReference: Highcharts.Chart | null = null;
 
-// Utility to format numbers dynamically with K, M, B
 function formatNumber(value: number, format: string): string {
     try {
-        const formattedValue = numeral(value).format(format);
-        return formattedValue.replace('k', 'K').replace('m', 'M').replace('b', 'B');
-    } catch (error) {
-        console.error("Error formatting number:", error);
-        return value.toString();
+        return numeral(value).format(format).replace('k', 'K').replace('m', 'M').replace('b', 'B');
+    } catch {
+        return value?.toString() ?? '0';
     }
 }
 
-const seriesColorMap: Record<string, string> = {};
-const BYNDER_COLORS = [
-    '#126DFE', '#0E6765', '#B080EF', '#FCD640',
-    '#051E46', '#031025', '#CDCCFF', '#ECF3FF'
-];
-let colorIndex = 0;
-
-function generateRandomColor(): string {
-    const color = BYNDER_COLORS[colorIndex % BYNDER_COLORS.length];
-    colorIndex++;
-    return color;
-}
-function getBackgroundColorForSeries(seriesName: string): string {
-    if (seriesColorMap[seriesName]) {
-        return seriesColorMap[seriesName];
-    }
-    const color = generateRandomColor();
-    seriesColorMap[seriesName] = color;
-    return color;
-}
-
+/**
+ * Column index mapping (matches the SQL query field order):
+ *   0 = Year(Close Date Month)   — not used after removing stagename
+ *   1 = Original Renewal ARR Converted
+ *   2 = Indexation ARR Converted
+ *   3 = Renewal Uplift ARR Converted
+ *   4 = Discounts ARR Converted        (stored as positive, represents a reduction)
+ *   5 = Net Solutions ARR Converted
+ *   6 = Renewed ARR Converted
+ *   7 = Cumulative Indexation ARR Converted
+ */
 function getDataModel(chartModel: ChartModel) {
-    const configDimensions =
-        chartModel.config?.chartConfig?.[1]?.dimensions ??
-        chartModel.config?.chartConfig?.[0]?.dimensions ??
-        [];
+    const dataArr: DataPointsArray =
+        chartModel.data?.[chartModel.data.length - 1]?.data ?? { columns: [], dataValue: [] };
 
-    const dataArr: DataPointsArray = chartModel.data?.[chartModel.data?.length - 1]?.data ?? { columns: [], dataValue: [] };
+    // Sum all rows (there may be multiple date rows returned)
+    let orig = 0, idx = 0, uplift = 0, disc = 0, sol = 0, renewed = 0, cumIdx = 0;
 
-    // Defensive checks for all columns
-    const xAxisColumn = configDimensions?.[0]?.columns?.[0];
-    const seriesColumn = configDimensions?.[1]?.columns?.[0];
-    const measureColumn = configDimensions?.[2]?.columns?.[0];
-    const comparisonColumn = configDimensions?.[3]?.columns?.[0];
-    const tooltipArr = configDimensions?.[4]?.columns || [];
-
-    // Log for debugging
-    console.log("Config Dimensions:", configDimensions);
-    console.log("Tooltip Columns:", tooltipArr);
-
-    const xAxisLabels = _.uniq(
-        dataArr.dataValue.map((row) =>
-            row[dataArr.columns.indexOf(xAxisColumn?.id)] ?? "N/A"
-        )
-    );
-
-    const seriesData = _.groupBy(
-        dataArr.dataValue,
-        (row) => row[dataArr.columns.indexOf(seriesColumn?.id)]
-    );
-
-    const series = Object.keys(seriesData).map((seriesName) => {
-        const data = xAxisLabels.map((label) => {
-            const row = seriesData[seriesName]?.find(
-                (item) =>
-                    item[dataArr.columns.indexOf(xAxisColumn?.id)] === label
-            );
-            const measureValue = row
-                ? parseFloat(row[dataArr.columns.indexOf(measureColumn?.id)])
-                : 0;
-            const comparisonValue = row
-                ? parseFloat(
-                      row[dataArr.columns.indexOf(comparisonColumn?.id)]
-                  )
-                : 0;
-
-            // Tooltip Data Handling with Validation
-            const tooltipData = tooltipArr.map((col) => {
-                const columnIndex = dataArr.columns.findIndex((c) => c === col.id);
-                return {
-                    columnName: col.name,
-                    value: row ? row[columnIndex] ?? "N/A" : "N/A", // Handle missing data
-                };
-            });
-
-            return { measureValue, comparisonValue, tooltipData };
-        });
-
-        return {
-            name: seriesName,
-            data,
-            color: getBackgroundColorForSeries(seriesName),
-            stack: "stack1",
-        };
+    dataArr.dataValue.forEach((row) => {
+        orig    += parseFloat(String(row[1] ?? 0)) || 0;
+        idx     += parseFloat(String(row[2] ?? 0)) || 0;
+        uplift  += parseFloat(String(row[3] ?? 0)) || 0;
+        disc    += parseFloat(String(row[4] ?? 0)) || 0;
+        sol     += parseFloat(String(row[5] ?? 0)) || 0;
+        renewed += parseFloat(String(row[6] ?? 0)) || 0;
+        cumIdx  += parseFloat(String(row[7] ?? 0)) || 0;
     });
 
+    // Column names for axis/tooltip labels — pull from chartModel if available
+    const cols = chartModel.columns ?? [];
+    const colName = (i: number) => cols[i]?.name ?? '';
+
     return {
-        xAxisLabels,
-        series,
+        orig, idx, uplift, disc, sol, renewed, cumIdx,
+        colNames: {
+            orig:    colName(1) || 'Original Renewal ARR',
+            idx:     colName(2) || 'Indexation ARR',
+            uplift:  colName(3) || 'Renewal Uplift ARR',
+            disc:    colName(4) || 'Discounts ARR',
+            sol:     colName(5) || 'Net Solutions ARR',
+            renewed: colName(6) || 'Renewed ARR',
+            cumIdx:  colName(7) || 'Cumulative Indexation ARR',
+        },
     };
-}
-
-function getComparisonColumnName(chartModel: ChartModel): string {
-    const comparisonColumn = chartModel.config?.chartConfig?.[0]?.dimensions.find(
-        (dim) => dim.key === 'comparison'
-    )?.columns[0];
-    return comparisonColumn?.name || 'Comparison';
-}
-
-
-function getAxisTitles(chartModel: ChartModel): { xAxisTitle: string, yAxisTitle: string, comparisonMeasureTitle: string } {
-    const configDimensions = chartModel.config?.chartConfig?.[0]?.dimensions ?? [];
-    const xAxisColumn = configDimensions?.[0]?.columns?.[0];
-    const yAxisColumn = configDimensions?.[2]?.columns?.[0];
-    const comparisonColumn = configDimensions?.[3]?.columns?.[0];
-
-    const xAxisTitle = xAxisColumn?.name || 'X-Axis';
-    const yAxisTitle = yAxisColumn?.name || 'Y-Axis';
-    const comparisonMeasureTitle = comparisonColumn?.name || 'Comparison Measure';
-
-    return { xAxisTitle, yAxisTitle, comparisonMeasureTitle };
 }
 
 function render(ctx: CustomChartContext) {
     const chartModel = ctx.getChartModel();
-    const dataModel = getDataModel(chartModel);
-    const comparisonMeasureName = getComparisonColumnName(chartModel);
-    const { xAxisTitle, yAxisTitle } = getAxisTitles(chartModel);
-    const numberFormat = (chartModel.visualProps as VisualProps)?.numberFormat || '0.[0]a';
-    const visualProps = chartModel.visualProps as VisualProps;    
-    const showTotalStackLabels = visualProps?.showTotalStackLabels ?? true; // Default to true
-    const stackColors = visualProps.stackColors || {};
-    const stack_column_id = chartModel.config?.chartConfig?.[0]?.dimensions?.[1]?.columns?.[0]?.id;
+    const dm = getDataModel(chartModel);
+    const visualProps = (chartModel.visualProps ?? {}) as VisualProps;
 
+    const numberFormat    = visualProps.numberFormat   ?? '0.[0]a';
+    const colorPositive   = visualProps.colorPositive  ?? '#378ADD';
+    const colorNegative   = visualProps.colorNegative  ?? '#E24B4A';
+    const colorTotal      = visualProps.colorTotal      ?? '#534AB7';
+    const colorCumulative = visualProps.colorCumulative ?? '#D85A30';
+    const showDataLabels  = visualProps.showDataLabels  ?? true;
 
-        // Get user-defined stack colors
-    const stackColorsInput = visualProps?.stackColors || '';
-    const stackColorsArray = stackColorsInput.split(',').map(color => color.trim());
-        
-        // Assign colors to stack values
-    const stackValues = [...new Set(dataModel.series.map(series => series.name))]; // Unique stack values
-    const stackColorsMap = stackValues.reduce((map, stackValue, index) => {
-    map[stackValue] = stackColorsArray[index] || '#CCCCCC'; // Default to gray if not enough colors
-        return map;
-    }, {} as Record<string, string>);
+    const { orig, idx, uplift, disc, sol, renewed, cumIdx, colNames } = dm;
 
-        // Sort series alphabetically by name
-    const sortedSeries = dataModel.series.sort((a, b) => a.name.localeCompare(b.name));
+    // Waterfall intermediate values
+    const s1 = orig;
+    const s2 = s1 + idx;
+    const s3 = s2 + uplift;
+    const s4 = s3 - disc;   // discounts reduce
+    const s5 = s4 + sol;
 
+    // Highcharts waterfall series data
+    // isSum: true = total bar from zero; isIntermediateSum would float, but we compute manually
+    const waterfallData: Highcharts.PointOptionsObject[] = [
+        {
+            name: colNames.orig,
+            y: orig,
+            color: colorTotal,
+            isSum: true,
+        },
+        {
+            name: colNames.idx,
+            y: idx,
+            color: colorPositive,
+        },
+        {
+            name: colNames.uplift,
+            y: uplift,
+            color: colorPositive,
+        },
+        {
+            name: colNames.disc,
+            y: -disc,   // negative so Highcharts waterfall draws it downward
+            color: colorNegative,
+        },
+        {
+            name: colNames.sol,
+            y: sol,
+            color: colorPositive,
+        },
+        {
+            name: colNames.renewed,
+            y: renewed,
+            color: colorTotal,
+            isSum: true,
+        },
+    ];
 
-    console.log('stack_column_id' + stack_column_id);
+    // Cumulative indexation as a flat line across all categories
+    const categories = waterfallData.map(d => d.name as string);
+    const cumulativeLine = categories.map(() => cumIdx);
 
     if (globalChartReference) {
         globalChartReference.destroy();
+        globalChartReference = null;
     }
 
-
-    globalChartReference = Highcharts.chart({
+    globalChartReference = Highcharts.chart('chart', {
         chart: {
-            renderTo: 'chart',
-            type: 'bar',
+            type: 'waterfall',
             events: {
-                load: function () {
-                    console.log("Chart loaded successfully");
-
-                    // Add right-click (context menu) event listener
-                    this.container.addEventListener('contextmenu', function (event) {
+                load() {
+                    this.container.addEventListener('contextmenu', (event) => {
                         event.preventDefault();
-
-                        const pointerEvent = new PointerEvent('pointerdown', {
-                            clientX: event.clientX,
-                            clientY: event.clientY,
-                            pointerType: 'mouse',
-                        });
-
-                        const clickedPoint = globalChartReference.series[0].searchPoint(pointerEvent, true);
-                        if (clickedPoint) {
-                            ctx.emitEvent(ChartToTSEvent.OpenContextMenu, {
-                                event: {
-                                    clientX: event.clientX,
-                                    clientY: event.clientY,
-                                },
-                                clickedPoint: {
-                                    tuple: [
-                                        { columnId: chartModel.columns[1].id, value: clickedPoint.category },
-                                        { columnId: chartModel.columns[0].id, value: clickedPoint.series.name },
-                                        { columnId: chartModel.columns[2].id, value: clickedPoint.y },
-                                    ],
-                                },
-                            });
-                        }
+                        // Context menu on chart background — no specific point to pass
                     });
                 },
             },
         },
-        
+
         title: { text: '' },
+        credits: { enabled: false },
+
         xAxis: {
-            categories: dataModel.xAxisLabels,
+            type: 'category',
             lineWidth: 0,
-            title: { 
-                enabled: true,
-                text: xAxisTitle, // add image here HTML
-                style: {
-                    fontWeight: 'bold',
-                    color: '#000000',
-                },
+            gridLineWidth: 0,
+            labels: {
+                style: { fontWeight: 'bold', color: '#333' },
+            },
+            title: {
+                text: 'ARR Components',
+                style: { fontWeight: 'bold', color: '#000' },
                 events: {
-                    click: function (e) {
-                        const axisValue = this.value; // Value of the X-axis label
-                        const columnIds = chartModel.config?.chartConfig?.[0]?.dimensions?.[0]?.columns.map(col => col.id) || [];
-                        
+                    click(e: MouseEvent) {
+                        const columnIds =
+                            chartModel.config?.chartConfig?.[0]?.dimensions?.[0]?.columns.map(
+                                (col: ChartColumn) => col.id,
+                            ) ?? [];
                         ctx.emitEvent(ChartToTSEvent.OpenAxisMenu, {
-                            columnIds: columnIds,
-                            event: {
-                                clientX: e.clientX,
-                                clientY: e.clientY,
-                            },
-                            selectedActions: AxisMenuActions[axisValue],
+                            columnIds,
+                            event: { clientX: e.clientX, clientY: e.clientY },
+                            selectedActions: [],
                         });
                     },
                 },
             } as any,
-            gridLineWidth: 0,
         },
 
         yAxis: {
-            min: 0,
             title: {
-                useHTML: true, 
-                text: yAxisTitle, //add HTML image here,
-                gridLineWidth: 0,
-                LineWidth: 0,
-                style: {
-                    fontWeight: 'bold',
-                    color: '#000000',
-                },
+                text: 'ARR (EUR)',
+                style: { fontWeight: 'bold', color: '#000' },
                 events: {
-                    click: function (e) {
-                        const axisValue = this.value;
-                        const columnIds = chartModel.config?.chartConfig?.[0]?.dimensions?.[2]?.columns.map(col => col.id) || [];
-                        
+                    click(e: MouseEvent) {
+                        const columnIds =
+                            chartModel.config?.chartConfig?.[0]?.dimensions?.[1]?.columns.map(
+                                (col: ChartColumn) => col.id,
+                            ) ?? [];
                         ctx.emitEvent(ChartToTSEvent.OpenAxisMenu, {
-                            columnIds: columnIds,
-                            event: {
-                                clientX: e.clientX,
-                                clientY: e.clientY,
-                            },
-                            selectedActions: AxisMenuActions[axisValue],
+                            columnIds,
+                            event: { clientX: e.clientX, clientY: e.clientY },
+                            selectedActions: [],
                         });
                     },
                 },
             } as any,
-            gridLineWidth: 0,
+            gridLineWidth: 1,
             labels: {
-                formatter: function () {
+                formatter() {
                     return formatNumber(this.value as number, numberFormat);
                 },
             },
-            stackLabels: {
-                enabled: showTotalStackLabels,
-                formatter: function () {
-                    return formatNumber(this.total as number, numberFormat);
-                },
-                style: { color: '#000' },
-            },
         },
+
         legend: {
+            enabled: true,
             align: 'right',
             verticalAlign: 'top',
             layout: 'vertical',
         },
-        credits: {
-            enabled: false,
-        },
+
         tooltip: {
-            followPointer: true,
-            padding: 10,
-            shadow: true,
             backgroundColor: '#3A3F48',
             borderColor: '#FFD700',
             borderRadius: 4,
             borderWidth: 1,
-            headerFormat: '',
             style: {
                 color: '#FFFFFF',
                 fontSize: '12px',
-                fontFamily: '"Helvetica Neue", Helvetica, Arial, sans-serif',
-                fontWeight: 'normal',
-                textAlign: 'left',
             },
             useHTML: true,
-            pointFormatter: function () {
-                const point = this;
-                const options = point.options;
-                debugger;
-                const tooltipData = point.tooltipData;
+            formatter() {
+                const point = this.point as any;
+                const val = point.isSum
+                    ? (this.y ?? 0)
+                    : (this.y ?? 0);
+                const runningTotal = (point as any).stackTotal ?? this.y ?? 0;
 
-                const pointValue = this.y as number;
-                const stackTotal = this.total as number;
-                const comparisonValue = this.point?.comparisonValue || 0;
-                const changePercent = 
-                    ((pointValue - options.comparisonValue) / options.comparisonValue) * 100;
-                const percentageOfTotal = stackTotal
-                    ? ((pointValue / stackTotal) * 100).toFixed(1)
-                    : 0;
-        
-                const xAxisName = this.series?.chart?.userOptions?.xAxis?.[0]?.title?.text || 'X-Axis';
-                const stackColumnName =
-                    chartModel.config?.chartConfig?.[0]?.dimensions?.[1]?.columns?.[0]?.name || 'Stack';
-                const yAxisName =
-                    this.series?.chart?.userOptions?.yAxis?.[0]?.title?.text || 'Y-Axis';
-                const comparisonName =
-                    chartModel.config?.chartConfig?.[0]?.dimensions?.[3]?.columns?.[0]?.name || 'Comparison';
-
-                
-                debugger;
-                
-                let tooltipHtml = `
-                    <br><b>${xAxisName}:</b> ${point.category || 'N/A'}<br><br>
-                    <b>${stackColumnName}:</b> ${this.series.name || 'N/A'}<br><br>
-                    <b>${yAxisName}:</b> ${formatNumber(point.y || 0, numberFormat)}<br><br>
-                    <b>${comparisonName}:</b> ${formatNumber(options.comparisonValue || 0, numberFormat)}<br><br>
-                    <b>${changePercent.toFixed(2)}% vs. ${comparisonMeasureName}<br><br>
-                    ${percentageOfTotal}% of Total<br><br>
+                return `
+                    <b>${this.key}</b><br/>
+                    <b>Value:</b> ${formatNumber(Math.abs(val), numberFormat)}<br/>
+                    <b>Running total:</b> ${formatNumber((point as any).cumulative ?? 0, numberFormat)}
                 `;
-
-                console.log(tooltipData + ' within Tooltip');
-
-                if (tooltipData && Array.isArray(tooltipData)) {
-                    tooltipData.forEach((data) => {
-                        tooltipHtml += `<b>${data.columnName}:</b> ${formatNumber(data.value || 'N/A',numberFormat)}<br><br>`;
-                    });
-                } else {
-                    tooltipHtml+= null;
-                }
-
-                return tooltipHtml;
             },
         },
-        plotOptions: {
-            series: {
-                stacking: 'normal',
-                pointPadding: 0.1,
-                groupPadding: 0.05,
-                pointWidth: 30,
-                dataLabels: {
-                    enabled: true,
-                    align: 'centre',
-                    overflow: 'none',
-                    verticalAlign: 'middle',
-                    inside: true,
-                    crop: 'true',
-                    formatter: function () {
-                        const point = this.point;
-                        const pointValue = this.y as number;
-                        const stackTotal = this.total as number;
-                        const comparisonValue = this.point?.comparisonValue || 0;
-                        const changePercent = comparisonValue
-                          ? ((pointValue - comparisonValue) / comparisonValue) * 100
-                          : 0;
-                        const percentageOfTotal = stackTotal
-                          ? ((pointValue / stackTotal) * 100).toFixed(1)
-                          : 0;
-            
-                        const fullLabel = `${formatNumber(
-                          pointValue,
-                          numberFormat
-                        )} | ${changePercent.toFixed(
-                          2
-                        )}% vs. ${comparisonMeasureName} | ${percentageOfTotal}% of Ttl.`;
 
-                        if(this.point.shapeArgs.height > fullLabel.length * 6){
-                            //check .height value
-                            return fullLabel;
-                        } else {
-                            const availableLength = Math.floor(this.point.shapeArgs.height/6) - 6;
-                            if(availableLength < 3) return;
-                            return fullLabel.slice(0, availableLength) + ' ...';
-                        }
-                      },
+        plotOptions: {
+            waterfall: {
+                lineWidth: 1,
+                lineColor: '#aaa',
+                borderWidth: 0,
+                pointPadding: 0.1,
+                groupPadding: 0.1,
+                dataLabels: {
+                    enabled: showDataLabels,
                     style: {
-                        fontFamily: 'optimo-plain, "Helvetica Neue", Helvetica, Arial, sans-serif',
                         fontWeight: '500',
-                        color: '#5e5e5e',
-                        fontSize: '12.5px',
-                        textOutline: '1.6px white',
-                        textShadow: 'rgba(255, 255, 255, 0.6) 0px 0px 2px',
+                        fontSize: '11px',
+                        color: '#333',
+                        textOutline: '1px white',
+                    },
+                    formatter() {
+                        return formatNumber(Math.abs(this.y ?? 0), numberFormat);
                     },
                 },
                 point: {
                     events: {
-                        contextmenu: function (e) {
+                        contextmenu(e: MouseEvent) {
                             e.preventDefault();
-                            const point = this;
-                            console.log('1 value: ' + chartModel.columns[0].id + ', Value: ' + point.series.name);
-                            console.log('2 value: ' + chartModel.columns[1].id + ', Value: ' + point.category);
-                            console.log('3 value: ' + chartModel.columns[2].id + ', Value: ' + point.y);
-
+                            const point = this as any;
                             ctx.emitEvent(ChartToTSEvent.OpenContextMenu, {
-                                event: {
-                                    clientX: e.clientX,
-                                    clientY: e.clientY,
-                                },
+                                event: { clientX: e.clientX, clientY: e.clientY },
                                 clickedPoint: {
                                     tuple: [
-                                        { columnId: chartModel.columns[1].id, value: point.category },
-                                        { columnId: chartModel.columns[0].id, value: point.series.name },
-                                        { columnId: chartModel.columns[2].id, value: point.y },
+                                        {
+                                            columnId: chartModel.columns?.[1]?.id ?? '',
+                                            value: point.name,
+                                        },
+                                        {
+                                            columnId: chartModel.columns?.[6]?.id ?? '',
+                                            value: point.y,
+                                        },
                                     ],
                                 },
                             });
@@ -456,21 +295,34 @@ function render(ctx: CustomChartContext) {
                     },
                 },
             },
-        } as any,
-        series: sortedSeries.map(s => ({
-            ...s,
-            data: s.data.map(d => ({
-                y: d.measureValue || 0,
-                
-                comparisonValue: d.comparisonValue,
-                tooltipData: d.tooltipData,
-            })),
-            color: stackColorsMap[s.name], // Apply user-defined color // Assign color based on user input or fallback to default
-        })) as Highcharts.SeriesOptionsType[],
+            line: {
+                dashStyle: 'Dash',
+                marker: { enabled: false },
+                enableMouseTracking: true,
+            },
+        },
+
+        series: [
+            {
+                type: 'waterfall',
+                name: 'ARR Waterfall',
+                data: waterfallData,
+                upColor: colorPositive,
+                color: colorNegative,
+                showInLegend: false,
+            } as Highcharts.SeriesWaterfallOptions,
+            {
+                type: 'line',
+                name: colNames.cumIdx,
+                data: cumulativeLine,
+                color: colorCumulative,
+                dashStyle: 'Dash',
+                marker: { enabled: false },
+                zIndex: 5,
+            } as Highcharts.SeriesLineOptions,
+        ],
     });
 }
-
-
 
 const renderChart = async (ctx: CustomChartContext) => {
     try {
@@ -483,102 +335,72 @@ const renderChart = async (ctx: CustomChartContext) => {
     }
 };
 
-
-
 (async () => {
     const ctx = await getChartContext({
         getDefaultChartConfig: (chartModel: ChartModel) => {
             const cols = chartModel.columns;
-            const stack_column_id = chartModel.config?.chartConfig?.[0]?.dimensions?.[1]?.columns?.[0]?.id; // Fetch stack column ID
-
-            const attributeColumns = cols.filter((col) => col.type === ColumnType.ATTRIBUTE);
             const measureColumns = cols.filter((col) => col.type === ColumnType.MEASURE);
-
-            if (attributeColumns.length < 2) {
-                throw new Error('Insufficient attribute columns for x and stack axes.');
-            }
-            if (measureColumns.length < 2) {
-                throw new Error('Insufficient measure columns for y and comparison axes.');
-            }
+            const attributeColumns = cols.filter((col) => col.type === ColumnType.ATTRIBUTE);
 
             return [
                 {
                     key: 'column',
                     dimensions: [
-                        { key: 'x', columns: [attributeColumns[0]] },
-                        { key: 'stack', columns: [attributeColumns[1]] },
-                        { key: 'y', columns: measureColumns.slice(0, 1) },
-                        { key: 'comparison', columns: measureColumns.slice(1, 2) },
-                        { key: 'Tooltip', columns: measureColumns.slice(2)}
-
+                        // Optional date dimension
+                        { key: 'date',    columns: attributeColumns.slice(0, 1) },
+                        // All ARR measures in order
+                        { key: 'orig',    columns: measureColumns.slice(0, 1) },
+                        { key: 'idx',     columns: measureColumns.slice(1, 2) },
+                        { key: 'uplift',  columns: measureColumns.slice(2, 3) },
+                        { key: 'disc',    columns: measureColumns.slice(3, 4) },
+                        { key: 'sol',     columns: measureColumns.slice(4, 5) },
+                        { key: 'renewed', columns: measureColumns.slice(5, 6) },
+                        { key: 'cumIdx',  columns: measureColumns.slice(6, 7) },
                     ],
                 },
             ];
         },
+
         getQueriesFromChartConfig: (chartConfig: ChartConfig[]): Array<Query> => {
             return chartConfig.map((config) =>
                 config.dimensions.reduce(
                     (acc: Query, dimension) => ({
                         queryColumns: [...acc.queryColumns, ...dimension.columns],
                     }),
-                    { queryColumns: [] } as Query
-                )
+                    { queryColumns: [] } as Query,
+                ),
             );
         },
+
         renderChart,
+
         chartConfigEditorDefinition: [
             {
                 key: 'column',
-                label: 'Bar Chart Configuration',
+                label: 'Waterfall Chart Configuration',
                 descriptionText:
-                    'Configure the chart by selecting attributes for X-axis, stack, measure, and comparison.',
+                    'Map your ARR measures in order. The chart will render them as a waterfall.',
                 columnSections: [
                     {
-                        key: 'x',
-                        label: 'X-Axis Attribute',
+                        key: 'date',
+                        label: 'Date (optional)',
                         allowAttributeColumns: true,
                         allowMeasureColumns: false,
                         maxColumnCount: 1,
                     },
-                    {
-                        key: 'stack',
-                        label: 'Stack Attribute',
-                        allowAttributeColumns: true,
-                        allowMeasureColumns: false,
-                        maxColumnCount: 1,
-                    },
-                    {
-                        key: 'y',
-                        label: 'Y-Axis Measure',
-                        allowAttributeColumns: false,
-                        allowMeasureColumns: true,
-                        maxColumnCount: 1,
-                    },
-                    {
-                        key: 'comparison',
-                        label: 'Comparison Measure',
-                        allowAttributeColumns: false,
-                        allowMeasureColumns: true,
-                        maxColumnCount: 1,
-                    },
-                    {
-                        key: 'Tooltip',
-                        label: 'Tooltip Columns',
-                        allowAttributeColumns: true,
-                        allowMeasureColumns: true,
-                        allowTimeSeriesColumns: false
-                    },
+                    { key: 'orig',    label: 'Original Renewal ARR', allowAttributeColumns: false, allowMeasureColumns: true, maxColumnCount: 1 },
+                    { key: 'idx',     label: 'Indexation ARR',        allowAttributeColumns: false, allowMeasureColumns: true, maxColumnCount: 1 },
+                    { key: 'uplift',  label: 'Renewal Uplift ARR',    allowAttributeColumns: false, allowMeasureColumns: true, maxColumnCount: 1 },
+                    { key: 'disc',    label: 'Discounts ARR',         allowAttributeColumns: false, allowMeasureColumns: true, maxColumnCount: 1 },
+                    { key: 'sol',     label: 'Net Solutions ARR',     allowAttributeColumns: false, allowMeasureColumns: true, maxColumnCount: 1 },
+                    { key: 'renewed', label: 'Renewed ARR',           allowAttributeColumns: false, allowMeasureColumns: true, maxColumnCount: 1 },
+                    { key: 'cumIdx',  label: 'Cumulative Indexation ARR', allowAttributeColumns: false, allowMeasureColumns: true, maxColumnCount: 1 },
                 ],
             },
         ],
+
         visualPropEditorDefinition: {
             elements: [
-                {
-                    key: 'showTotalStackLabels',
-                    type: 'checkbox',
-                    defaultValue: true, // Total stack labels visible by default
-                    label: 'Show Total Stack Labels',
-                },
                 {
                     key: 'numberFormat',
                     type: 'text',
@@ -586,9 +408,34 @@ const renderChart = async (ctx: CustomChartContext) => {
                     label: 'Number Format',
                 },
                 {
-                    key: 'stackColors', // New text box for stack colors
+                    key: 'colorPositive',
                     type: 'text',
-                    label: 'Stack Colors (Comma-separated HEX)',
+                    defaultValue: '#378ADD',
+                    label: 'Positive bar colour (HEX)',
+                },
+                {
+                    key: 'colorNegative',
+                    type: 'text',
+                    defaultValue: '#E24B4A',
+                    label: 'Negative bar colour (HEX)',
+                },
+                {
+                    key: 'colorTotal',
+                    type: 'text',
+                    defaultValue: '#534AB7',
+                    label: 'Total bar colour (HEX)',
+                },
+                {
+                    key: 'colorCumulative',
+                    type: 'text',
+                    defaultValue: '#D85A30',
+                    label: 'Cumulative indexation line colour (HEX)',
+                },
+                {
+                    key: 'showDataLabels',
+                    type: 'checkbox',
+                    defaultValue: true,
+                    label: 'Show data labels',
                 },
             ],
         },
