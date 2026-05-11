@@ -76,27 +76,24 @@ function render(ctx: CustomChartContext) {
 
     const { orig, idx, uplift, disc, sol, renewed, cumIdx, colNames } = dm;
 
-    // Running totals for movement bars
-    // Movements float between orig and renewed on a zoomed y-axis
-    const p1 = orig;                    // start
-    const p2 = p1 + cumIdx;            // after cumulative indexation
-    const p3 = p2 + idx;               // after indexation
-    const p4 = p3 + uplift;            // after renewal uplift
-    const p5 = p4 + sol;               // after net solutions
-    const p6 = p5 - Math.abs(disc);    // after discounts (goes down)
-    // p6 should ≈ renewed
+    // Running totals — disc is used as-is (positive = upward, negative = downward)
+    // The sign of disc from the data determines direction
+    const p1 = orig;
+    const p2 = p1 + cumIdx;
+    const p3 = p2 + idx;
+    const p4 = p3 + uplift;
+    const p5 = p4 + sol;
+    const p6 = p5 + disc;  // disc keeps its own sign from the data
 
-    // Movement bars only — 5 bars between orig and renewed
-    // Each is a floating columnrange [low, high]
     const movements = [
-        { name: colNames.cumIdx, low: p1, high: p2, delta: cumIdx,          color: colorPositive },
-        { name: colNames.idx,    low: p2, high: p3, delta: idx,             color: colorPositive },
-        { name: colNames.uplift, low: p3, high: p4, delta: uplift,          color: colorPositive },
-        { name: colNames.sol,    low: p4, high: p5, delta: sol,             color: colorPositive },
-        { name: colNames.disc,   low: p6, high: p5, delta: -Math.abs(disc), color: colorNegative },
+        { name: colNames.cumIdx, low: Math.min(p1, p2), high: Math.max(p1, p2), delta: cumIdx, color: cumIdx >= 0 ? colorPositive : colorNegative },
+        { name: colNames.idx,    low: Math.min(p2, p3), high: Math.max(p2, p3), delta: idx,    color: idx    >= 0 ? colorPositive : colorNegative },
+        { name: colNames.uplift, low: Math.min(p3, p4), high: Math.max(p3, p4), delta: uplift, color: uplift >= 0 ? colorPositive : colorNegative },
+        { name: colNames.sol,    low: Math.min(p4, p5), high: Math.max(p4, p5), delta: sol,    color: sol    >= 0 ? colorPositive : colorNegative },
+        { name: colNames.disc,   low: Math.min(p5, p6), high: Math.max(p5, p6), delta: disc,   color: disc   >= 0 ? colorPositive : colorNegative },
     ];
 
-    // Y-axis zoom: show only the range of movements with padding
+    // Y-axis zoom to the movement range
     const allValues = [p1, p2, p3, p4, p5, p6, renewed];
     const yMin = Math.min(...allValues);
     const yMax = Math.max(...allValues);
@@ -104,28 +101,23 @@ function render(ctx: CustomChartContext) {
     const axisMin = yMin - padding;
     const axisMax = yMax + padding;
 
-    // X categories: START label + 5 movements + END label
     const categories = [
         'START\n' + formatNumber(orig, numberFormat),
         ...movements.map(m => m.name),
         'END\n' + formatNumber(renewed, numberFormat),
     ];
 
-    // columnrange data — START and END are zero-height invisible markers
-    // movements are the real floating bars
     const seriesData = [
-        // START — invisible, just holds the axis position
-        { low: orig,    high: orig,    color: 'transparent', delta: orig,    isTotal: true, totalVal: orig    },
-        ...movements.map(m => ({ ...m, isTotal: false, totalVal: null })),
-        // END — invisible, just holds the axis position
-        { low: renewed, high: renewed, color: 'transparent', delta: renewed, isTotal: true, totalVal: renewed },
+        { low: orig,    high: orig,    color: 'transparent', delta: orig,    isTotal: true },
+        ...movements.map(m => ({ low: m.low, high: m.high, color: m.color, delta: m.delta, isTotal: false })),
+        { low: renewed, high: renewed, color: 'transparent', delta: renewed, isTotal: true },
     ];
 
-    // Connector line: one continuous line connecting tops/bottoms of each bar
+    // Connector line: follows the running total through each movement
     const connectorY = [
-        orig,  // top of START
-        ...movements.map(m => m.delta >= 0 ? m.high : m.low), // top of positive, bottom of negative
-        renewed, // top of END
+        p1,                                                    // START
+        ...movements.map(m => m.delta >= 0 ? m.high : m.low), // top of up bars, bottom of down bars
+        renewed,                                               // END
     ];
 
     if (globalChartReference) {
@@ -138,6 +130,7 @@ function render(ctx: CustomChartContext) {
             type: 'columnrange',
             marginLeft: 80,
             marginRight: 40,
+            marginBottom: 100,
         },
         title: { text: '' },
         credits: { enabled: false },
@@ -149,20 +142,23 @@ function render(ctx: CustomChartContext) {
             gridLineWidth: 0,
             labels: {
                 useHTML: true,
+                style: { fontSize: '11px' },
                 formatter: function (this: any) {
                     const cat = this.value as string;
                     const isStartEnd = cat.startsWith('START') || cat.startsWith('END');
                     const parts = cat.split('\n');
                     if (isStartEnd) {
                         return `
-                            <div style="text-align:center">
-                                <div style="font-size:10px;color:#888;text-transform:uppercase;font-weight:600">${parts[0]}</div>
-                                <div style="font-size:13px;font-weight:700;color:${colorTotal}">${parts[1] ?? ''}</div>
+                            <div style="text-align:center;width:90px;white-space:normal;word-break:break-word;">
+                                <div style="font-size:10px;color:#888;text-transform:uppercase;font-weight:600;">${parts[0]}</div>
+                                <div style="font-size:13px;font-weight:700;color:${colorTotal};">${parts[1] ?? ''}</div>
                             </div>`;
                     }
-                    return `<div style="text-align:center;font-size:11px;font-weight:600;color:#333;max-width:100px">${cat}</div>`;
+                    // Strip "Converted" suffix to shorten labels, wrap remainder
+                    const short = cat.replace(' Converted', '').replace(' ARR', '\nARR');
+                    const lines = short.split('\n');
+                    return `<div style="text-align:center;width:90px;white-space:normal;word-break:break-word;font-size:11px;font-weight:600;color:#333;">${lines.join('<br/>')}</div>`;
                 },
-                style: { fontSize: '11px' },
             },
             title: { text: '' },
         },
@@ -171,7 +167,7 @@ function render(ctx: CustomChartContext) {
             min: axisMin,
             max: axisMax,
             title: {
-                text: 'ARR (EUR)',
+                text: 'ARR',
                 style: { fontWeight: 'bold', color: '#000' },
             },
             gridLineWidth: 1,
@@ -194,7 +190,7 @@ function render(ctx: CustomChartContext) {
             useHTML: true,
             formatter: function (this: any) {
                 const point = this.point as any;
-                if (point.isTotal) return false; // hide tooltip for start/end markers
+                if (point.isTotal) return false;
                 const delta = point.delta ?? 0;
                 const sign = delta >= 0 ? '+' : '';
                 const runningTotal = delta >= 0 ? point.high : point.low;
@@ -267,7 +263,6 @@ function render(ctx: CustomChartContext) {
                 })),
                 showInLegend: false,
             },
-            // Dotted connector line running through the tops of each bar
             {
                 type: 'line',
                 name: 'connector',
@@ -279,38 +274,26 @@ function render(ctx: CustomChartContext) {
                 showInLegend: false,
                 enableMouseTracking: false,
             },
-            // START total label marker (circle at orig level)
             {
                 type: 'scatter',
                 name: 'start-marker',
                 data: [{ x: 0, y: orig }],
-                marker: {
-                    symbol: 'circle',
-                    radius: 6,
-                    fillColor: colorTotal,
-                    lineWidth: 0,
-                },
+                marker: { symbol: 'circle', radius: 6, fillColor: colorTotal, lineWidth: 0 },
                 showInLegend: false,
                 enableMouseTracking: false,
             },
-            // END total label marker (circle at renewed level)
             {
                 type: 'scatter',
                 name: 'end-marker',
                 data: [{ x: categories.length - 1, y: renewed }],
-                marker: {
-                    symbol: 'circle',
-                    radius: 6,
-                    fillColor: colorTotal,
-                    lineWidth: 0,
-                },
+                marker: { symbol: 'circle', radius: 6, fillColor: colorTotal, lineWidth: 0 },
                 showInLegend: false,
                 enableMouseTracking: false,
             },
         ],
     });
 
-    // Draw START and END value callout boxes using Highcharts SVG renderer
+    // Draw START and END callout pills using SVG renderer
     const chart = globalChartReference;
     const xAxis = chart.xAxis[0];
     const yAxis = chart.yAxis[0];
@@ -319,18 +302,16 @@ function render(ctx: CustomChartContext) {
         const px = xAxis.toPixels(xCat, false);
         const py = yAxis.toPixels(yVal, false);
         const w = 80, h = 28, r = 14;
-
         chart.renderer.rect(px - w / 2, py - h / 2, w, h, r)
             .attr({ fill: color, zIndex: 5 })
             .add();
-
         chart.renderer.text(label, px, py + 5)
             .attr({ align: 'center', zIndex: 6 })
             .css({ color: '#fff', fontSize: '12px', fontWeight: '700' })
             .add();
     };
 
-    drawCallout(0, orig,    formatNumber(orig,    numberFormat), colorTotal);
+    drawCallout(0, orig, formatNumber(orig, numberFormat), colorTotal);
     drawCallout(categories.length - 1, renewed, formatNumber(renewed, numberFormat), colorTotal);
 }
 
