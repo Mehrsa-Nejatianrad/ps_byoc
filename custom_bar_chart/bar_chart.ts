@@ -32,6 +32,16 @@ function formatNumber(value: number, format: string): string {
     }
 }
 
+/**
+ * Column index mapping — no stagename or date in query, so:
+ *   0 = Original Renewal ARR Converted
+ *   1 = Indexation ARR Converted
+ *   2 = Renewal Uplift ARR Converted
+ *   3 = Discounts ARR Converted        (positive number, represents a reduction)
+ *   4 = Net Solutions ARR Converted
+ *   5 = Renewed ARR Converted
+ *   6 = Cumulative Indexation ARR Converted
+ */
 function getDataModel(chartModel: ChartModel) {
     const dataArr: DataPointsArray =
         chartModel.data?.[chartModel.data.length - 1]?.data ?? { columns: [], dataValue: [] };
@@ -39,13 +49,13 @@ function getDataModel(chartModel: ChartModel) {
     let orig = 0, idx = 0, uplift = 0, disc = 0, sol = 0, renewed = 0, cumIdx = 0;
 
     dataArr.dataValue.forEach((row) => {
-        orig    += parseFloat(String(row[1] ?? 0)) || 0;
-        idx     += parseFloat(String(row[2] ?? 0)) || 0;
-        uplift  += parseFloat(String(row[3] ?? 0)) || 0;
-        disc    += parseFloat(String(row[4] ?? 0)) || 0;
-        sol     += parseFloat(String(row[5] ?? 0)) || 0;
-        renewed += parseFloat(String(row[6] ?? 0)) || 0;
-        cumIdx  += parseFloat(String(row[7] ?? 0)) || 0;
+        orig    += parseFloat(String(row[0] ?? 0)) || 0;
+        idx     += parseFloat(String(row[1] ?? 0)) || 0;
+        uplift  += parseFloat(String(row[2] ?? 0)) || 0;
+        disc    += parseFloat(String(row[3] ?? 0)) || 0;
+        sol     += parseFloat(String(row[4] ?? 0)) || 0;
+        renewed += parseFloat(String(row[5] ?? 0)) || 0;
+        cumIdx  += parseFloat(String(row[6] ?? 0)) || 0;
     });
 
     const cols = chartModel.columns ?? [];
@@ -54,13 +64,13 @@ function getDataModel(chartModel: ChartModel) {
     return {
         orig, idx, uplift, disc, sol, renewed, cumIdx,
         colNames: {
-            orig:    colName(1) || 'Original Renewal ARR',
-            idx:     colName(2) || 'Indexation ARR',
-            uplift:  colName(3) || 'Renewal Uplift ARR',
-            disc:    colName(4) || 'Discounts ARR',
-            sol:     colName(5) || 'Net Solutions ARR',
-            renewed: colName(6) || 'Renewed ARR',
-            cumIdx:  colName(7) || 'Cumulative Indexation ARR',
+            orig:    colName(0) || 'Original Renewal ARR',
+            idx:     colName(1) || 'Indexation ARR',
+            uplift:  colName(2) || 'Renewal Uplift ARR',
+            disc:    colName(3) || 'Discounts ARR',
+            sol:     colName(4) || 'Net Solutions ARR',
+            renewed: colName(5) || 'Renewed ARR',
+            cumIdx:  colName(6) || 'Cumulative Indexation ARR',
         },
     };
 }
@@ -79,17 +89,23 @@ function render(ctx: CustomChartContext) {
 
     const { orig, idx, uplift, disc, sol, renewed, cumIdx, colNames } = dm;
 
+    // Waterfall order:
+    // 1. Original Renewal ARR  — starting total (isSum from zero)
+    // 2. Cumulative Indexation — positive addition
+    // 3. Indexation ARR        — positive addition
+    // 4. Renewal Uplift ARR    — positive addition
+    // 5. Net Solutions ARR     — positive addition
+    // 6. Discounts ARR         — negative reduction
+    // 7. Renewed ARR           — ending total (isSum from zero)
     const waterfallData = [
-        { name: colNames.orig,    y: orig,          color: colorTotal,    isSum: true  },
-        { name: colNames.idx,     y: idx,            color: colorPositive               },
-        { name: colNames.uplift,  y: uplift,         color: colorPositive               },
-        { name: colNames.disc,    y: -Math.abs(disc),color: colorNegative               },
-        { name: colNames.sol,     y: sol,            color: colorPositive               },
-        { name: colNames.renewed, y: renewed,        color: colorTotal,    isSum: true  },
+        { name: colNames.orig,    y: orig,           color: colorTotal,    isSum: true },
+        { name: colNames.cumIdx,  y: cumIdx,         color: colorPositive              },
+        { name: colNames.idx,     y: idx,            color: colorPositive              },
+        { name: colNames.uplift,  y: uplift,         color: colorPositive              },
+        { name: colNames.sol,     y: sol,            color: colorPositive              },
+        { name: colNames.disc,    y: -Math.abs(disc),color: colorNegative              },
+        { name: colNames.renewed, y: renewed,        color: colorTotal,    isSum: true },
     ];
-
-    const categories = waterfallData.map((d: any) => d.name);
-    const cumulativeLine = categories.map(() => cumIdx);
 
     if (globalChartReference) {
         globalChartReference.destroy();
@@ -125,12 +141,7 @@ function render(ctx: CustomChartContext) {
             },
         },
 
-        legend: {
-            enabled: true,
-            align: 'right',
-            verticalAlign: 'top',
-            layout: 'vertical',
-        },
+        legend: { enabled: false },
 
         tooltip: {
             backgroundColor: '#3A3F48',
@@ -178,18 +189,14 @@ function render(ctx: CustomChartContext) {
                                 event: { clientX: e.clientX, clientY: e.clientY },
                                 clickedPoint: {
                                     tuple: [
-                                        { columnId: chartModel.columns?.[1]?.id ?? '', value: point.name },
-                                        { columnId: chartModel.columns?.[6]?.id ?? '', value: point.y },
+                                        { columnId: chartModel.columns?.[0]?.id ?? '', value: point.name },
+                                        { columnId: chartModel.columns?.[5]?.id ?? '', value: point.y },
                                     ],
                                 },
                             });
                         },
                     },
                 },
-            },
-            line: {
-                dashStyle: 'Dash',
-                marker: { enabled: false },
             },
         },
 
@@ -201,15 +208,6 @@ function render(ctx: CustomChartContext) {
                 upColor: colorPositive,
                 color: colorNegative,
                 showInLegend: false,
-            },
-            {
-                type: 'line',
-                name: colNames.cumIdx,
-                data: cumulativeLine,
-                color: colorCumulative,
-                dashStyle: 'Dash',
-                marker: { enabled: false },
-                zIndex: 5,
             },
         ],
     });
@@ -231,13 +229,11 @@ const renderChart = async (ctx: CustomChartContext) => {
         getDefaultChartConfig: (chartModel: ChartModel) => {
             const cols = chartModel.columns;
             const measureColumns = cols.filter((col) => col.type === ColumnType.MEASURE);
-            const attributeColumns = cols.filter((col) => col.type === ColumnType.ATTRIBUTE);
 
             return [
                 {
                     key: 'column',
                     dimensions: [
-                        { key: 'date',    columns: attributeColumns.slice(0, 1) },
                         { key: 'orig',    columns: measureColumns.slice(0, 1) },
                         { key: 'idx',     columns: measureColumns.slice(1, 2) },
                         { key: 'uplift',  columns: measureColumns.slice(2, 3) },
@@ -269,14 +265,13 @@ const renderChart = async (ctx: CustomChartContext) => {
                 label: 'Waterfall Chart Configuration',
                 descriptionText: 'Map your ARR measures in order.',
                 columnSections: [
-                    { key: 'date',    label: 'Date (optional)',           allowAttributeColumns: true,  allowMeasureColumns: false, maxColumnCount: 1 },
-                    { key: 'orig',    label: 'Original Renewal ARR',      allowAttributeColumns: false, allowMeasureColumns: true,  maxColumnCount: 1 },
-                    { key: 'idx',     label: 'Indexation ARR',            allowAttributeColumns: false, allowMeasureColumns: true,  maxColumnCount: 1 },
-                    { key: 'uplift',  label: 'Renewal Uplift ARR',        allowAttributeColumns: false, allowMeasureColumns: true,  maxColumnCount: 1 },
-                    { key: 'disc',    label: 'Discounts ARR',             allowAttributeColumns: false, allowMeasureColumns: true,  maxColumnCount: 1 },
-                    { key: 'sol',     label: 'Net Solutions ARR',         allowAttributeColumns: false, allowMeasureColumns: true,  maxColumnCount: 1 },
-                    { key: 'renewed', label: 'Renewed ARR',               allowAttributeColumns: false, allowMeasureColumns: true,  maxColumnCount: 1 },
-                    { key: 'cumIdx',  label: 'Cumulative Indexation ARR', allowAttributeColumns: false, allowMeasureColumns: true,  maxColumnCount: 1 },
+                    { key: 'orig',    label: 'Original Renewal ARR',      allowAttributeColumns: false, allowMeasureColumns: true, maxColumnCount: 1 },
+                    { key: 'idx',     label: 'Indexation ARR',            allowAttributeColumns: false, allowMeasureColumns: true, maxColumnCount: 1 },
+                    { key: 'uplift',  label: 'Renewal Uplift ARR',        allowAttributeColumns: false, allowMeasureColumns: true, maxColumnCount: 1 },
+                    { key: 'disc',    label: 'Discounts ARR',             allowAttributeColumns: false, allowMeasureColumns: true, maxColumnCount: 1 },
+                    { key: 'sol',     label: 'Net Solutions ARR',         allowAttributeColumns: false, allowMeasureColumns: true, maxColumnCount: 1 },
+                    { key: 'renewed', label: 'Renewed ARR',               allowAttributeColumns: false, allowMeasureColumns: true, maxColumnCount: 1 },
+                    { key: 'cumIdx',  label: 'Cumulative Indexation ARR', allowAttributeColumns: false, allowMeasureColumns: true, maxColumnCount: 1 },
                 ],
             },
         ],
