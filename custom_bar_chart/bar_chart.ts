@@ -10,7 +10,8 @@ import {
 } from '@thoughtspot/ts-chart-sdk';
 import numeral from 'numeral';
 
-// Highcharts + waterfall module loaded via CDN script tags in index.html
+// Highcharts + highcharts-more loaded via CDN script tags in index.html
+// highcharts-more is required for columnrange
 declare const Highcharts: any;
 
 interface VisualProps {
@@ -79,73 +80,54 @@ function render(ctx: CustomChartContext) {
     const dm = getDataModel(chartModel);
     const visualProps = (chartModel.visualProps ?? {}) as VisualProps;
 
-    const numberFormat  = visualProps.numberFormat  ?? '0.[0]a';
-    const colorPositive = visualProps.colorPositive ?? '#378ADD';
-    const colorNegative = visualProps.colorNegative ?? '#E24B4A';
-    const colorTotal    = visualProps.colorTotal    ?? '#534AB7';
+    const numberFormat   = visualProps.numberFormat   ?? '0.[0]a';
+    const colorPositive  = visualProps.colorPositive  ?? '#378ADD';
+    const colorNegative  = visualProps.colorNegative  ?? '#E24B4A';
+    const colorTotal     = visualProps.colorTotal     ?? '#534AB7';
     const showDataLabels = visualProps.showDataLabels ?? true;
 
     const { orig, idx, uplift, disc, sol, renewed, cumIdx, colNames } = dm;
 
-    // How Highcharts waterfall works:
-    // - Each bar's y is a DELTA added to the running total
-    // - isSum: true means "draw a total bar = sum of all previous deltas" (ignores y value)
-    // - isIntermediateSum: true does the same but resets for subsequent bars
-    //
-    // Strategy:
-    // - Original Renewal: y = orig (first bar, running total starts at 0, goes to orig) ✓
-    // - Cumulative Indexation: y = cumIdx (delta added on top of orig)
-    // - Indexation: y = idx
-    // - Renewal Uplift: y = uplift
-    // - Net Solutions: y = sol
-    // - Discounts: y = -disc (negative delta, bar goes down)
-    // - Renewed ARR: isSum = true (Highcharts sums all deltas = orig+cumIdx+idx+uplift+sol-disc)
-    //
-    // BUT: Renewed ARR from the data is a fixed value that may differ from the sum of components.
-    // So instead of isSum, we compute the gap needed and use an adjustment delta.
+    // Compute running totals — each bar floats between its start and end
+    // Order: Original → CumIdx → Indexation → Renewal Uplift → Net Solutions → Discounts → Renewed
+    const p0 = 0;           // baseline
+    const p1 = orig;        // after Original Renewal
+    const p2 = p1 + cumIdx; // after Cumulative Indexation
+    const p3 = p2 + idx;    // after Indexation
+    const p4 = p3 + uplift; // after Renewal Uplift
+    const p5 = p4 + sol;    // after Net Solutions
+    const p6 = p5 - Math.abs(disc); // after Discounts (goes down)
+    // Renewed ARR is the final total — drawn from 0 to renewed
 
-    const computedTotal = orig + cumIdx + idx + uplift + sol - Math.abs(disc);
-    const renewedDelta = renewed - computedTotal; // adjustment so final bar lands on renewed
-
-    const waterfallData: any[] = [
-        {
-            name: colNames.orig,
-            y: orig,
-            color: colorTotal,
-        },
-        {
-            name: colNames.cumIdx,
-            y: cumIdx,
-            color: colorPositive,
-        },
-        {
-            name: colNames.idx,
-            y: idx,
-            color: colorPositive,
-        },
-        {
-            name: colNames.uplift,
-            y: uplift,
-            color: colorPositive,
-        },
-        {
-            name: colNames.sol,
-            y: sol,
-            color: colorPositive,
-        },
-        {
-            name: colNames.disc,
-            y: -Math.abs(disc),
-            color: colorNegative,
-        },
-        // Use isSum so Highcharts draws it as a full bar from zero
-        // and override its displayed label with the actual renewed value
-        {
-            name: colNames.renewed,
-            isSum: true,
-            color: colorTotal,
-        },
+    // Each point: [low, high, label, color, deltaLabel]
+    // For total bars (orig, renewed): low=0, high=value
+    // For movement bars: low=runningStart, high=runningEnd
+    const bars = [
+        { name: colNames.orig,    low: p0, high: p1, color: colorTotal,    delta: orig            },
+        { name: colNames.cumIdx,  low: p1, high: p2, color: colorPositive, delta: cumIdx          },
+        { name: colNames.idx,     low: p2, high: p3, color: colorPositive, delta: idx             },
+        { name: colNames.uplift,  low: p3, high: p4, color: colorPositive, delta: uplift          },
+        { name: colNames.sol,     low: p4, high: p5, color: colorPositive, delta: sol             },
+        { name: colNames.disc,    low: p6, high: p5, color: colorNegative, delta: -Math.abs(disc) },
+        { name: colNames.renewed, low: p0, high: renewed, color: colorTotal, delta: renewed       },
     ];
+
+    const categories = bars.map(b => b.name);
+
+    // Build connector lines between bars (dotted horizontal lines)
+    // Each connector goes from the top of bar[i] to the position of bar[i+1]
+    const connectorData: any[] = [];
+    for (let i = 0; i < bars.length - 2; i++) {
+        const fromBar = bars[i];
+        const toBar = bars[i + 1];
+        // The connector starts at the end of fromBar (high for positive, low for negative)
+        const connectY = fromBar.high < fromBar.low ? fromBar.low : fromBar.high;
+        connectorData.push({
+            x: i + 0.4,
+            x2: i + 1 - 0.4,
+            y: connectY,
+        });
+    }
 
     if (globalChartReference) {
         globalChartReference.destroy();
@@ -153,15 +135,17 @@ function render(ctx: CustomChartContext) {
     }
 
     globalChartReference = Highcharts.chart('chart', {
-        chart: { type: 'waterfall' },
+        chart: { type: 'columnrange', inverted: false },
         title: { text: '' },
         credits: { enabled: false },
 
         xAxis: {
-            type: 'category',
+            categories,
             lineWidth: 0,
             gridLineWidth: 0,
-            labels: { style: { fontWeight: 'bold', color: '#333' } },
+            labels: {
+                style: { fontWeight: 'bold', color: '#333', fontSize: '12px' },
+            },
             title: {
                 text: 'ARR Components',
                 style: { fontWeight: 'bold', color: '#000' },
@@ -192,41 +176,38 @@ function render(ctx: CustomChartContext) {
             useHTML: true,
             formatter: function (this: any) {
                 const point = this.point;
-                // For isSum bars, cumulative = the sum; for delta bars use Math.abs(y)
-                const displayVal = point.isSum
-                    ? formatNumber(point.cumulative ?? 0, numberFormat)
-                    : formatNumber(Math.abs(this.y ?? 0), numberFormat);
-                const running = formatNumber(point.cumulative ?? 0, numberFormat);
+                const delta = point.delta ?? 0;
+                const sign = delta >= 0 ? '+' : '';
+                const isTotal = point.isTotal;
                 return `
-                    <b>${this.key}</b><br/>
-                    <b>Value:</b> ${displayVal}<br/>
-                    <b>Running total:</b> ${running}
+                    <b>${categories[point.x]}</b><br/>
+                    ${isTotal
+                        ? `<b>Total:</b> ${formatNumber(Math.abs(delta), numberFormat)}`
+                        : `<b>Change:</b> ${sign}${formatNumber(delta, numberFormat)}`
+                    }<br/>
+                    <b>Running total:</b> ${formatNumber(point.high, numberFormat)}
                 `;
             },
         },
 
         plotOptions: {
-            waterfall: {
-                lineWidth: 1,
-                lineColor: '#aaa',
+            columnrange: {
                 borderWidth: 0,
                 pointPadding: 0.1,
                 groupPadding: 0.1,
                 dataLabels: {
                     enabled: showDataLabels,
+                    inside: true,
+                    verticalAlign: 'middle',
                     style: {
-                        fontWeight: '500',
+                        fontWeight: '600',
                         fontSize: '11px',
                         color: '#fff',
-                        textOutline: '1px rgba(0,0,0,0.3)',
+                        textOutline: 'none',
                     },
                     formatter: function (this: any) {
                         const point = this.point;
-                        // Show the cumulative total for isSum bars, delta for others
-                        if (point.isSum) {
-                            return formatNumber(point.cumulative ?? 0, numberFormat);
-                        }
-                        return formatNumber(Math.abs(this.y ?? 0), numberFormat);
+                        return formatNumber(Math.abs(point.delta ?? 0), numberFormat);
                     },
                 },
                 point: {
@@ -238,8 +219,8 @@ function render(ctx: CustomChartContext) {
                                 event: { clientX: e.clientX, clientY: e.clientY },
                                 clickedPoint: {
                                     tuple: [
-                                        { columnId: chartModel.columns?.[0]?.id ?? '', value: point.name },
-                                        { columnId: chartModel.columns?.[5]?.id ?? '', value: point.y },
+                                        { columnId: chartModel.columns?.[0]?.id ?? '', value: categories[point.x] },
+                                        { columnId: chartModel.columns?.[5]?.id ?? '', value: point.high },
                                     ],
                                 },
                             });
@@ -251,12 +232,32 @@ function render(ctx: CustomChartContext) {
 
         series: [
             {
-                type: 'waterfall',
+                type: 'columnrange',
                 name: 'ARR Waterfall',
-                data: waterfallData,
-                upColor: colorPositive,
-                color: colorNegative,
+                data: bars.map((b, i) => ({
+                    low: b.low,
+                    high: b.high,
+                    color: b.color,
+                    delta: b.delta,
+                    isTotal: i === 0 || i === bars.length - 1,
+                })),
                 showInLegend: false,
+            },
+            // Dotted connector lines between bars
+            {
+                type: 'line',
+                name: 'connectors',
+                data: bars.slice(0, -1).map((b, i) => ({
+                    x: i,
+                    // Connect from the top of positive bars, bottom of negative bars
+                    y: b.delta >= 0 ? b.high : b.low,
+                })),
+                color: '#aaa',
+                dashStyle: 'Dot',
+                lineWidth: 1,
+                marker: { enabled: false },
+                showInLegend: false,
+                enableMouseTracking: false,
             },
         ],
     });
