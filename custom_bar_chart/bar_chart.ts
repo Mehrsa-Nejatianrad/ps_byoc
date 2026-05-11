@@ -18,7 +18,6 @@ interface VisualProps {
     colorPositive?: string;
     colorNegative?: string;
     colorTotal?: string;
-    colorCumulative?: string;
     showDataLabels?: boolean;
 }
 
@@ -33,11 +32,11 @@ function formatNumber(value: number, format: string): string {
 }
 
 /**
- * Column index mapping — no stagename or date in query, so:
+ * Column index mapping — no stagename or date in query:
  *   0 = Original Renewal ARR Converted
  *   1 = Indexation ARR Converted
  *   2 = Renewal Uplift ARR Converted
- *   3 = Discounts ARR Converted        (positive number, represents a reduction)
+ *   3 = Discounts ARR Converted  (positive number = reduction)
  *   4 = Net Solutions ARR Converted
  *   5 = Renewed ARR Converted
  *   6 = Cumulative Indexation ARR Converted
@@ -80,31 +79,72 @@ function render(ctx: CustomChartContext) {
     const dm = getDataModel(chartModel);
     const visualProps = (chartModel.visualProps ?? {}) as VisualProps;
 
-    const numberFormat    = visualProps.numberFormat    ?? '0.[0]a';
-    const colorPositive   = visualProps.colorPositive   ?? '#378ADD';
-    const colorNegative   = visualProps.colorNegative   ?? '#E24B4A';
-    const colorTotal      = visualProps.colorTotal      ?? '#534AB7';
-    const colorCumulative = visualProps.colorCumulative ?? '#D85A30';
-    const showDataLabels  = visualProps.showDataLabels  ?? true;
+    const numberFormat  = visualProps.numberFormat  ?? '0.[0]a';
+    const colorPositive = visualProps.colorPositive ?? '#378ADD';
+    const colorNegative = visualProps.colorNegative ?? '#E24B4A';
+    const colorTotal    = visualProps.colorTotal    ?? '#534AB7';
+    const showDataLabels = visualProps.showDataLabels ?? true;
 
     const { orig, idx, uplift, disc, sol, renewed, cumIdx, colNames } = dm;
 
-    // Waterfall order:
-    // 1. Original Renewal ARR  — starting total (isSum from zero)
-    // 2. Cumulative Indexation — positive addition
-    // 3. Indexation ARR        — positive addition
-    // 4. Renewal Uplift ARR    — positive addition
-    // 5. Net Solutions ARR     — positive addition
-    // 6. Discounts ARR         — negative reduction
-    // 7. Renewed ARR           — ending total (isSum from zero)
-    const waterfallData = [
-        { name: colNames.orig,    y: orig,           color: colorTotal,    isSum: true },
-        { name: colNames.cumIdx,  y: cumIdx,         color: colorPositive              },
-        { name: colNames.idx,     y: idx,            color: colorPositive              },
-        { name: colNames.uplift,  y: uplift,         color: colorPositive              },
-        { name: colNames.sol,     y: sol,            color: colorPositive              },
-        { name: colNames.disc,    y: -Math.abs(disc),color: colorNegative              },
-        { name: colNames.renewed, y: renewed,        color: colorTotal,    isSum: true },
+    // How Highcharts waterfall works:
+    // - Each bar's y is a DELTA added to the running total
+    // - isSum: true means "draw a total bar = sum of all previous deltas" (ignores y value)
+    // - isIntermediateSum: true does the same but resets for subsequent bars
+    //
+    // Strategy:
+    // - Original Renewal: y = orig (first bar, running total starts at 0, goes to orig) ✓
+    // - Cumulative Indexation: y = cumIdx (delta added on top of orig)
+    // - Indexation: y = idx
+    // - Renewal Uplift: y = uplift
+    // - Net Solutions: y = sol
+    // - Discounts: y = -disc (negative delta, bar goes down)
+    // - Renewed ARR: isSum = true (Highcharts sums all deltas = orig+cumIdx+idx+uplift+sol-disc)
+    //
+    // BUT: Renewed ARR from the data is a fixed value that may differ from the sum of components.
+    // So instead of isSum, we compute the gap needed and use an adjustment delta.
+
+    const computedTotal = orig + cumIdx + idx + uplift + sol - Math.abs(disc);
+    const renewedDelta = renewed - computedTotal; // adjustment so final bar lands on renewed
+
+    const waterfallData: any[] = [
+        {
+            name: colNames.orig,
+            y: orig,
+            color: colorTotal,
+        },
+        {
+            name: colNames.cumIdx,
+            y: cumIdx,
+            color: colorPositive,
+        },
+        {
+            name: colNames.idx,
+            y: idx,
+            color: colorPositive,
+        },
+        {
+            name: colNames.uplift,
+            y: uplift,
+            color: colorPositive,
+        },
+        {
+            name: colNames.sol,
+            y: sol,
+            color: colorPositive,
+        },
+        {
+            name: colNames.disc,
+            y: -Math.abs(disc),
+            color: colorNegative,
+        },
+        // Use isSum so Highcharts draws it as a full bar from zero
+        // and override its displayed label with the actual renewed value
+        {
+            name: colNames.renewed,
+            isSum: true,
+            color: colorTotal,
+        },
     ];
 
     if (globalChartReference) {
@@ -151,12 +191,16 @@ function render(ctx: CustomChartContext) {
             style: { color: '#FFFFFF', fontSize: '12px' },
             useHTML: true,
             formatter: function (this: any) {
-                const val = this.y ?? 0;
-                const cumulative = this.point?.cumulative ?? 0;
+                const point = this.point;
+                // For isSum bars, cumulative = the sum; for delta bars use Math.abs(y)
+                const displayVal = point.isSum
+                    ? formatNumber(point.cumulative ?? 0, numberFormat)
+                    : formatNumber(Math.abs(this.y ?? 0), numberFormat);
+                const running = formatNumber(point.cumulative ?? 0, numberFormat);
                 return `
                     <b>${this.key}</b><br/>
-                    <b>Value:</b> ${formatNumber(Math.abs(val), numberFormat)}<br/>
-                    <b>Running total:</b> ${formatNumber(cumulative, numberFormat)}
+                    <b>Value:</b> ${displayVal}<br/>
+                    <b>Running total:</b> ${running}
                 `;
             },
         },
@@ -173,10 +217,15 @@ function render(ctx: CustomChartContext) {
                     style: {
                         fontWeight: '500',
                         fontSize: '11px',
-                        color: '#333',
-                        textOutline: '1px white',
+                        color: '#fff',
+                        textOutline: '1px rgba(0,0,0,0.3)',
                     },
                     formatter: function (this: any) {
+                        const point = this.point;
+                        // Show the cumulative total for isSum bars, delta for others
+                        if (point.isSum) {
+                            return formatNumber(point.cumulative ?? 0, numberFormat);
+                        }
                         return formatNumber(Math.abs(this.y ?? 0), numberFormat);
                     },
                 },
@@ -278,12 +327,11 @@ const renderChart = async (ctx: CustomChartContext) => {
 
         visualPropEditorDefinition: {
             elements: [
-                { key: 'numberFormat',    type: 'text',     defaultValue: '0.[0]a',  label: 'Number Format' },
-                { key: 'colorPositive',   type: 'text',     defaultValue: '#378ADD', label: 'Positive bar colour (HEX)' },
-                { key: 'colorNegative',   type: 'text',     defaultValue: '#E24B4A', label: 'Negative bar colour (HEX)' },
-                { key: 'colorTotal',      type: 'text',     defaultValue: '#534AB7', label: 'Total bar colour (HEX)' },
-                { key: 'colorCumulative', type: 'text',     defaultValue: '#D85A30', label: 'Cumulative line colour (HEX)' },
-                { key: 'showDataLabels',  type: 'checkbox', defaultValue: true,      label: 'Show data labels' },
+                { key: 'numberFormat',   type: 'text',     defaultValue: '0.[0]a',  label: 'Number Format' },
+                { key: 'colorPositive',  type: 'text',     defaultValue: '#378ADD', label: 'Positive bar colour (HEX)' },
+                { key: 'colorNegative',  type: 'text',     defaultValue: '#E24B4A', label: 'Negative bar colour (HEX)' },
+                { key: 'colorTotal',     type: 'text',     defaultValue: '#534AB7', label: 'Total bar colour (HEX)' },
+                { key: 'showDataLabels', type: 'checkbox', defaultValue: true,      label: 'Show data labels' },
             ],
         },
     });
